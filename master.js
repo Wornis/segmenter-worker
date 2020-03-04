@@ -3,11 +3,13 @@ const cluster = require('cluster');
 
 const subClient = new v1.SubscriberClient();
 const projectId = 'ad4screen-us';
-const subscriptionName = 'segmenter-worker-djtxk38k4';
+const subscriptionName = process.env.JOB_ID;
 const formattedSubscription = subClient.subscriptionPath(projectId, subscriptionName);
 
 const NB_RANGES = 95;
 const ACK_DEADLINE_SECONDS = 15;
+
+const sleep = async (timeout) => new Promise((resolve) => setTimeout(resolve, timeout));
 
 const pullMessages = async (pulledMessages = [], countRetry) => {
   const request = {
@@ -19,9 +21,16 @@ const pullMessages = async (pulledMessages = [], countRetry) => {
   const messages = [...pulledMessages, ...response.receivedMessages];
   if (messages.length > NB_RANGES) { return messages.slice(0, NB_RANGES); }
   if (messages.length < NB_RANGES) {
+    await sleep(1000);
     if (countRetry < 15) return pullMessages(messages, countRetry + 1);
   }
   return messages;
+};
+
+const getAckIds = (messages) => {
+  const ackIds = {};
+  messages.forEach(({ ackId }, i) => ackIds[i] = ackId);
+  return ackIds;
 };
 
 const getData = async (messages) => messages.map(({ message: { data } }) => data.toString());
@@ -39,28 +48,27 @@ const resetAckDeadline = (ackIds) => subClient.modifyAckDeadline({
   ackDeadlineSeconds: ACK_DEADLINE_SECONDS,
 });
 
-const handleChildExit = async ({ id }, code, messages) => {
+const handleChildExit = async ({ id }, code, ackIds) => {
   const messageIdx = id - 1;
   if (code === 0) {
-    await acknowledge([messages[messageIdx]]);
-    messages.splice(messageIdx, 1);
-    if (!messages.length) { return process.exit(0); }
+    await acknowledge([ackIds[messageIdx]]);
+    // eslint-disable-next-line no-param-reassign
+    delete ackIds[messageIdx];
+    if (!Object.keys(ackIds).length) { return process.exit(0); }
     return null;
   }
-  const data = messages[messageIdx].message.data.toString();
-  throw new Error(`A worker failed his job: ${data}`);
+  throw new Error('A worker failed his job');
 };
-
-const sleep = async (timeout) => new Promise((resolve) => setTimeout(resolve, timeout));
 
 module.exports = async () => {
   const messages = await pullMessages();
+  const ackIds = getAckIds(messages);
   const data = await getData(messages);
   await forkWorkers(data);
-  cluster.on('exit', (worker, code) => handleChildExit(worker, code, messages));
-  while (messages.length) {
-    resetAckDeadline(messages.map(({ ackId }) => ackId));
+  cluster.on('exit', (worker, code) => handleChildExit(worker, code, ackIds));
+  while (Object.keys(ackIds).length) {
+    resetAckDeadline(Object.values(ackIds));
     // eslint-disable-next-line no-await-in-loop
-    await sleep(ACK_DEADLINE_SECONDS - 5);
+    await sleep((ACK_DEADLINE_SECONDS - 5) * 1000);
   }
 };

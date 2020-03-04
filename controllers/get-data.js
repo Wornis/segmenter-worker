@@ -2,7 +2,7 @@ const Bigtable = require('@google-cloud/bigtable');
 const { Storage } = require('@google-cloud/storage');
 const { formatFilterInput, writePayload, formatRange } = require('../utils/tools');
 
-const TMP_BUCKET = 'tmp_ultimator';
+const TMP_BUCKET = 'csv_split'; // TODO to change tmp_ultimator
 const projectId = 'ad4screen-us';
 const bigTable = new Bigtable({ projectId });
 const gcs = new Storage({ projectId });
@@ -32,7 +32,7 @@ exports.getData = ({
       workIndex,
     });
     blobStream.end();
-    reject();
+    return reject();
   });
   bigTableStream.on('data', async (row) => {
     const gettersWithValue = {};
