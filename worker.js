@@ -1,3 +1,3 @@
 module.exports = async () => {
-  return process.exit(0);
+  process.exit(0);
 };
